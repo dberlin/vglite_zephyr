@@ -53,10 +53,15 @@ extern "C" {
 #endif
 
 #if RTOS
+#if defined(OS_ZEPHYR)
+#define elm_alloc(num_objects,object_size) k_calloc(num_objects,object_size)
+#define elm_free  k_free
+#else
 #include "FreeRTOS.h"
 
 #define elm_alloc(num_objects,object_size) pvPortMalloc(num_objects * object_size)
 #define elm_free  vPortFree
+#endif
 #else
 #define elm_alloc calloc
 #define elm_free  free

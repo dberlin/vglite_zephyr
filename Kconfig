@@ -1,0 +1,4 @@
+config VGLITE
+    bool "Enable vglite library"
+    default n
+    select THREAD_LOCAL_STORAGE
