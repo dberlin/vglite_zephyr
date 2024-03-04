@@ -7,6 +7,7 @@
 /* If bit31 is activated this indicates a bus error */
 #define IS_AXI_BUS_ERR(x) ((x) & (1U << 31))
 
+#define EVENT_ID(x) 1 << x
 #if !defined(VG_DRIVER_SINGLE_THREAD)
 #define ISR_WAIT_TIME 0x1FFFF
 #define MAX_MUTEX_TIME 100
@@ -43,14 +44,14 @@ typedef struct vg_lite_os {
   struct k_queue queue_handle;
 } vg_lite_os_t;
 
-K_SEM_DEFINE(mutex, 0, 1);
+K_SEM_DEFINE(vglite_mutex, 0, 1);
 static vg_lite_os_t os_obj = {0};
 
-struct k_sem semaphore[TASK_LENGTH] = {};
-struct k_sem command_semaphore;
+K_EVENT_DEFINE(vglite_events);
+struct k_sem vglite_command_semaphore;
 uint32_t curContext;
 #endif /* not defined(VG_DRIVER_SINGLE_THREAD) */
-K_SEM_DEFINE(int_queue, 0, 1);
+K_SEM_DEFINE(vglite_int_queue, 0, 1);
 volatile uint32_t int_flags;
 
 void __attribute__((weak)) vg_lite_bus_error_handler() {
@@ -69,10 +70,10 @@ void command_queue(void *, void *, void *) {
   k_queue_init(&os_obj.queue_handle);
   // os_obj.queue_handle = xQueueCreate(QUEUE_LENGTH, sizeof(vg_lite_queue_t *
   // ));
-  k_sem_init(&command_semaphore, 0, 30);
+  k_sem_init(&vglite_command_semaphore, 0, 30);
   while (true) {
     even_got = 0;
-    if (k_sem_take(&command_semaphore, K_FOREVER) == 0) {
+    if (k_sem_take(&vglite_command_semaphore, K_FOREVER) == 0) {
       if (!k_queue_is_empty(&os_obj.queue_handle)) {
         vg_lite_queue_t *peek_queue =
             k_queue_get(&os_obj.queue_handle, K_MSEC(TASK_WAIT_TIME));
@@ -124,8 +125,9 @@ void command_queue(void *, void *, void *) {
 #if defined(PRINT_DEBUG_REGISTER)
           }
 #endif
-          k_sem_give(&semaphore[peek_queue->event->semaphore_id]);
-          vg_lite_os_free((void *)peek_queue);
+          k_event_post(&vglite_events,
+                       EVENT_ID(peek_queue->event->semaphore_id));
+          vg_lite_os_free(peek_queue);
         }
       }
     }
@@ -162,7 +164,7 @@ int32_t vg_lite_os_initialize(void) {
 #if !defined(VG_DRIVER_SINGLE_THREAD)
 
   if (task_number == 0) {
-    if (k_sem_take(&mutex, K_MSEC(TASK_WAIT_TIME)) == 0) {
+    if (k_sem_take(&vglite_mutex, K_MSEC(TASK_WAIT_TIME)) == 0) {
       if (os_obj.thread_handle == NULL) {
         os_obj.thread_handle =
             k_thread_create(&os_obj.queue_thread_data, queue_thread_stack,
@@ -170,12 +172,12 @@ int32_t vg_lite_os_initialize(void) {
                             command_queue, NULL, NULL, NULL, 0, 0, K_NO_WAIT);
         if (os_obj.thread_handle == 0) {
           /* command queue task create fail */
-          k_sem_give(&mutex);
+          k_sem_give(&vglite_mutex);
           return VG_LITE_MULTI_THREAD_FAIL;
         }
       }
       task_number++;
-      k_sem_give(&mutex);
+      k_sem_give(&vglite_mutex);
       return VG_LITE_SUCCESS;
     }
   }
@@ -190,14 +192,14 @@ void vg_lite_os_deinitialize(void) {
 
 #if !defined(VG_DRIVER_SINGLE_THREAD)
 int32_t vg_lite_os_lock() {
-  if (k_sem_take(&mutex, K_MSEC(MAX_MUTEX_TIME)) != 0)
+  if (k_sem_take(&vglite_mutex, K_MSEC(MAX_MUTEX_TIME)) != 0)
     return VG_LITE_MULTI_THREAD_FAIL;
 
   return VG_LITE_SUCCESS;
 }
 
 int32_t vg_lite_os_unlock() {
-  k_sem_give(&mutex);
+  k_sem_give(&vglite_mutex);
   return VG_LITE_SUCCESS;
 }
 
@@ -220,7 +222,7 @@ int32_t vg_lite_os_submit(uint32_t context, uint32_t physical, uint32_t offset,
   curContext = context;
 
   if (vg_lite_os_wait_event(event) == VG_LITE_SUCCESS) {
-    k_sem_give(&command_semaphore);
+    k_sem_give(&vglite_command_semaphore);
     return VG_LITE_SUCCESS;
   }
 
@@ -228,12 +230,11 @@ int32_t vg_lite_os_submit(uint32_t context, uint32_t physical, uint32_t offset,
 }
 
 int32_t vg_lite_os_wait(uint32_t timeout, vg_lite_os_async_event_t *event) {
-  if (k_sem_take(&semaphore[event->semaphore_id], K_FOREVER) == 0) {
+  if (k_event_wait_all(&vglite_events, EVENT_ID(event->semaphore_id), true,
+                       K_MSEC(timeout)) == EVENT_ID(event->semaphore_id)) {
     if (event->signal == VG_LITE_HW_FINISHED) {
-      k_sem_give(&semaphore[event->semaphore_id]);
       return VG_LITE_SUCCESS;
     }
-    k_sem_give(&semaphore[event->semaphore_id]);
     return VG_LITE_TIMEOUT;
   }
   return VG_LITE_TIMEOUT;
@@ -248,7 +249,7 @@ void vg_lite_os_IRQHandler(void) {
     int_flags |= flags;
 
     /* Wake up any waiters. */
-    k_sem_give(&int_queue);
+    k_sem_give(&vglite_int_queue);
   }
 }
 
@@ -269,7 +270,7 @@ int32_t vg_lite_os_wait_interrupt(uint32_t timeout, uint32_t mask,
   }
   return 1;
 #else /*for rt500*/
-  if (k_sem_take(&int_queue, K_MSEC(timeout)) == 0) {
+  if (k_sem_take(&vglite_int_queue, K_MSEC(timeout)) == 0) {
     if (value != NULL) {
       *value = int_flags & mask;
       if (IS_AXI_BUS_ERR(*value)) {
@@ -289,9 +290,6 @@ int32_t vg_lite_os_init_event(vg_lite_os_async_event_t *event,
                               uint32_t semaphore_id, int32_t state) {
   if (event->semaphore_id >= TASK_LENGTH) return VG_LITE_INVALID_ARGUMENT;
 
-  if (k_sem_init(&semaphore[semaphore_id], 1, 1) != 0)
-    return VG_LITE_OUT_OF_MEMORY;
-
   event->semaphore_id = semaphore_id;
   event->signal = state;
 
@@ -300,8 +298,7 @@ int32_t vg_lite_os_init_event(vg_lite_os_async_event_t *event,
 
 int32_t vg_lite_os_delete_event(vg_lite_os_async_event_t *event) {
   if (event->semaphore_id >= TASK_LENGTH) return VG_LITE_INVALID_ARGUMENT;
-
-  k_sem_reset(&semaphore[event->semaphore_id]);
+  k_event_clear(&vglite_events, EVENT_ID(event->semaphore_id));
 
   return VG_LITE_SUCCESS;
 }
@@ -309,7 +306,7 @@ int32_t vg_lite_os_delete_event(vg_lite_os_async_event_t *event) {
 int32_t vg_lite_os_wait_event(vg_lite_os_async_event_t *event) {
   if (event->semaphore_id >= TASK_LENGTH) return VG_LITE_INVALID_ARGUMENT;
 
-  if (k_sem_take(&semaphore[event->semaphore_id], K_FOREVER) != 0)
+  if (k_event_wait(&vglite_events, EVENT_ID(event->semaphore_id), true, K_FOREVER) != EVENT_ID(event->semaphore_id))
     return VG_LITE_MULTI_THREAD_FAIL;
 
   return VG_LITE_SUCCESS;
@@ -317,7 +314,7 @@ int32_t vg_lite_os_wait_event(vg_lite_os_async_event_t *event) {
 
 int32_t vg_lite_os_signal_event(vg_lite_os_async_event_t *event) {
   if (event->semaphore_id >= TASK_LENGTH) return VG_LITE_INVALID_ARGUMENT;
-  k_sem_give(&semaphore[event->semaphore_id]);
+  k_event_post(&vglite_events, EVENT_ID(event->semaphore_id));
   return VG_LITE_SUCCESS;
 }
 
