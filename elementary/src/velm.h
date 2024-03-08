@@ -53,7 +53,7 @@ extern "C" {
 #endif
 
 #if RTOS
-#if defined(OS_ZEPHYR)
+#if defined(__ZEPHYR__)
 #define elm_alloc(num_objects,object_size) k_calloc(num_objects,object_size)
 #define elm_free  k_free
 #else

@@ -31,7 +31,7 @@
 #include "vg_lite_os.h"
 
 #if !_BAREMETAL
-#if defined(OS_ZEPHYR)
+#if defined(__ZEPHYR__)
 #include <zephyr/kernel.h>
 #else /* FreeRTOS is assumed */
 #include "FreeRTOS.h"
@@ -40,7 +40,7 @@
 #if !defined(VG_DRIVER_SINGLE_THREAD)
 #include "queue.h"
 #endif /* not defined(VG_DRIVER_SINGLE_THREAD) */
-#endif /* not defined(OS_ZEPHYR) */
+#endif /* not defined(__ZEPHYR__) */
 #else
 #include "xil_cache.h"
 #endif
@@ -152,7 +152,7 @@ struct vg_lite_device {
 #if _BAREMETAL
         /* wait_queue_head_t int_queue; */
         xSemaphoreHandle int_queue;
-#elif defined(OS_ZEPHYR)
+#elif defined(__ZEPHYR__)
         k_sem int_queue;
 #else /* FreeRTOS assumed */
         /* wait_queue_head_t int_queue; */
@@ -501,7 +501,7 @@ static int vg_lite_init(void)
     add_list(&node->list, &device->heap.list);
 #if defined(VG_DRIVER_SINGLE_THREAD)
   device->int_flags = 0;
-#if defined(OS_ZEPHYR)
+#if defined(__ZEPHYR__)
         k_sem_init(&device->int_queue, 0, 1);
 #elif !_BAREMETAL /*for rt500*/
         device->int_queue = xSemaphoreCreateBinary();
