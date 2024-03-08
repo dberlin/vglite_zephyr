@@ -1,5 +1,5 @@
 #include "elm_os.h"
-#if defined(OS_ZEPHYR)
+#if defined(__ZEPHYR__)
 #include <zephyr/kernel.h>
 
 vg_lite_error_t elm_os_set_tls(void* tls) {

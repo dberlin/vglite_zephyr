@@ -11,8 +11,7 @@ if (CONFIG_VGLITE)
             ${VGLITE_ROOT_DIR}/VGLiteKernel/rtos
             ${VGLITE_ROOT_DIR}/elementary/inc
             ${VGLITE_ROOT_DIR}/elementary/src)
-    zephyr_compile_definitions(
-            -DOS_ZEPHYR=1
+    zephyr_library_compile_definitions(
             -DVG_COMMAND_CALL=1
             -DVG_TARGET_FAST_CLEAR=0
             -DRTOS=1
